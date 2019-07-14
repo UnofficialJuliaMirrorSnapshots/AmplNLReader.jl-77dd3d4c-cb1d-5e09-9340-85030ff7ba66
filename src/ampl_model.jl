@@ -147,7 +147,7 @@ end
 
 # Scaling AmplModel instances.
 
-function NLPModels.varscale(nlp :: AmplModel, s :: AbstractVector)
+function NLPModels.varscale(nlp :: AmplModel, s :: Vector{Float64})
   @check_ampl_model
   length(s) >= nlp.meta.nvar || error("s must have length at least $(nlp.meta.nvar)")
 
@@ -156,6 +156,8 @@ function NLPModels.varscale(nlp :: AmplModel, s :: AbstractVector)
   err == 0 || throw(AmplException("Error while scaling variables"))
 end
 
+NLPModels.varscale(nlp :: AmplModel, s :: AbstractVector) = varscale(nlp, Vector{Float64}(s))
+
 function NLPModels.lagscale(nlp :: AmplModel, σ :: Float64)
   @check_ampl_model
   err = Cint(0)
@@ -163,7 +165,7 @@ function NLPModels.lagscale(nlp :: AmplModel, σ :: Float64)
   err == 0 || throw(AmplException("Error while scaling Lagrangian"))
 end
 
-function NLPModels.conscale(nlp :: AmplModel, s :: AbstractVector)
+function NLPModels.conscale(nlp :: AmplModel, s :: Vector{Float64})
   @check_ampl_model
   length(s) >= nlp.meta.ncon || error("s must have length at least $(nlp.meta.ncon)")
 
@@ -172,9 +174,11 @@ function NLPModels.conscale(nlp :: AmplModel, s :: AbstractVector)
   err == 0 || throw(AmplException("Error while scaling constraints"))
 end
 
+NLPModels.conscale(nlp :: AmplModel, s :: AbstractVector) = conscale(nlp, Vector{Float64}(s))
+
 # Evaluating objective, constraints and derivatives.
 
-function NLPModels.obj(nlp :: AmplModel, x :: AbstractVector)
+function NLPModels.obj(nlp :: AmplModel, x :: Vector{Float64})
   @check_ampl_model
   length(x) >= nlp.meta.nvar || error("x must have length at least $(nlp.meta.nvar)")
 
@@ -185,33 +189,49 @@ function NLPModels.obj(nlp :: AmplModel, x :: AbstractVector)
   return f
 end
 
-function NLPModels.grad!(nlp :: AmplModel, x :: AbstractVector, g :: AbstractVector)
+NLPModels.obj(nlp :: AmplModel, x :: AbstractVector) = obj(nlp, Vector{Float64}(x))
+
+function NLPModels.grad!(nlp :: AmplModel, x :: Vector{Float64}, g :: Vector{Float64})
   @check_ampl_model
   length(x) >= nlp.meta.nvar || error("x must have length at least $(nlp.meta.nvar)")
 
   err = Cint(0)
   @asl_call(:asl_grad, Ptr{Float64},
             (Ptr{Nothing}, Ptr{Float64}, Ptr{Float64}, Ref{Cint}),
-             nlp.__asl, x,            g,            err)
+             nlp.__asl,    x,            g,            err)
   nlp.counters.neval_grad += 1
   err == 0 || throw(AmplException("Error while evaluating objective gradient"))
   return g
 end
 
-function NLPModels.cons!(nlp :: AmplModel, x :: AbstractVector, c :: AbstractVector)
+function NLPModels.grad!(nlp :: AmplModel, x :: AbstractVector, g :: AbstractVector)
+  g_ = Vector{Float64}(undef, nlp.meta.nvar)
+  grad!(nlp, Vector{Float64}(x), g_)
+  g[1 : nlp.meta.nvar] .= g_
+  return g
+end
+
+function NLPModels.cons!(nlp :: AmplModel, x :: Vector{Float64}, c :: Vector{Float64})
   @check_ampl_model
   length(x) >= nlp.meta.nvar || error("x must have length at least $(nlp.meta.nvar)")
 
   err = Cint(0)
   @asl_call(:asl_cons, Nothing,
             (Ptr{Nothing}, Ptr{Float64}, Ptr{Float64}, Ref{Cint}),
-             nlp.__asl, x,            c,            err)
+             nlp.__asl,    x,            c,            err)
   nlp.counters.neval_cons += 1
   err == 0 || throw(AmplException("Error while evaluating constraints"))
   return c
 end
 
-function NLPModels.jth_con(nlp :: AmplModel, x :: AbstractVector, j :: Int)
+function NLPModels.cons!(nlp :: AmplModel, x :: AbstractVector, c :: AbstractVector)
+  c_ = Vector{Float64}(undef, nlp.meta.ncon)
+  cons!(nlp, Vector{Float64}(x), c_)
+  c[1 : nlp.meta.ncon] .= c_
+  return c
+end
+
+function NLPModels.jth_con(nlp :: AmplModel, x :: Vector{Float64}, j :: Int)
   @check_ampl_model
   (1 <= j <= nlp.meta.ncon)  || error("expected 0 ≤ j ≤ $(nlp.meta.ncon)")
   length(x) >= nlp.meta.nvar || error("x must have length at least $(nlp.meta.nvar)")
@@ -219,13 +239,15 @@ function NLPModels.jth_con(nlp :: AmplModel, x :: AbstractVector, j :: Int)
   err = Cint(0)
   cj = @asl_call(:asl_jcon, Float64,
                  (Ptr{Nothing}, Ptr{Float64}, Int32, Ref{Cint}),
-                  nlp.__asl, x,            j-1,   err)
+                  nlp.__asl,    x,            j-1,   err)
   nlp.counters.neval_jcon += 1
   err == 0 || throw(AmplException("Error while evaluating $j-th constraint"))
   return cj
 end
 
-function NLPModels.jth_congrad!(nlp :: AmplModel, x :: AbstractVector, j :: Int, g :: AbstractVector)
+NLPModels.jth_con(nlp :: AmplModel, x :: AbstractVector, j :: Int) = jth_con(nlp, Vector{Float64}(x), j)
+
+function NLPModels.jth_congrad!(nlp :: AmplModel, x :: Vector{Float64}, j :: Int, g :: Vector{Float64})
   @check_ampl_model
   (1 <= j <= nlp.meta.ncon)  || error("expected 0 ≤ j ≤ $(nlp.meta.ncon)")
   length(x) >= nlp.meta.nvar || error("x must have length at least $(nlp.meta.nvar)")
@@ -233,13 +255,20 @@ function NLPModels.jth_congrad!(nlp :: AmplModel, x :: AbstractVector, j :: Int,
   err = Cint(0)
   @asl_call(:asl_jcongrad, Ptr{Float64},
             (Ptr{Nothing}, Ptr{Float64}, Ptr{Float64}, Int32, Ref{Cint}),
-             nlp.__asl, x,            g,            j-1,   err)
+             nlp.__asl,    x,            g,            j-1,   err)
   nlp.counters.neval_jgrad += 1
   err == 0 || throw(AmplException("Error while evaluating $j-th constraint gradient"))
   return g
 end
 
-function NLPModels.jth_sparse_congrad(nlp :: AmplModel, x :: AbstractVector, j :: Int)
+function NLPModels.jth_congrad!(nlp :: AmplModel, x :: AbstractVector, j :: Int, g :: AbstractVector)
+  g_ = Vector{Float64}(undef, nlp.meta.nvar)
+  jth_congrad!(nlp, Vector{Float64}(x), j, g_)
+  g[1 : nlp.meta.nvar] .= g_
+  return g
+end
+
+function NLPModels.jth_sparse_congrad(nlp :: AmplModel, x :: Vector{Float64}, j :: Int)
   @check_ampl_model
   (1 <= j <= nlp.meta.ncon)  || error("expected 0 ≤ j ≤ $(nlp.meta.ncon)")
   length(x) >= nlp.meta.nvar || error("x must have length at least $(nlp.meta.nvar)")
@@ -260,12 +289,15 @@ function NLPModels.jth_sparse_congrad(nlp :: AmplModel, x :: AbstractVector, j :
   return sparsevec(inds, vals, nlp.meta.nvar)
 end
 
-function NLPModels.jac_structure!(nlp :: AmplModel, rows :: Vector{Int}, cols :: Vector{Int})
-  # this function is slightly wasteful but would otherwise require changes to
-  # the underlying C++ library
-  vals = Vector{Float64}(undef, nlp.meta.nnzj)
-  jac_coord!(nlp, nlp.meta.x0, rows, cols, vals)
-  nlp.counters.neval_jac -= 1
+NLPModels.jth_sparse_congrad(nlp :: AmplModel, x :: AbstractVector, j :: Int) = jth_sparse_congrad(nlp, Vector{Float64}(x), j)
+
+function NLPModels.jac_structure!(nlp :: AmplModel, rows :: Vector{Cint}, cols :: Vector{Cint})
+  @asl_call(:asl_jac_structure, Nothing,
+            (Ptr{Nothing}, Ptr{Int32}, Ptr{Int32}),
+             nlp.__asl,    rows,      cols)
+  # Use 1-based indexing.
+  @. rows[1 : nlp.meta.nnzj] += 1
+  @. cols[1 : nlp.meta.nnzj] += 1
   return rows, cols
 end
 
@@ -278,21 +310,18 @@ function NLPModels.jac_structure!(nlp :: AmplModel, rows :: AbstractVector{<: In
   return rows, cols
 end
 
-function NLPModels.jac_coord!(nlp :: AmplModel, x :: AbstractVector, rows :: Vector{Cint}, cols :: Vector{Cint}, vals :: Vector{Cdouble})
+function NLPModels.jac_coord!(nlp :: AmplModel, x :: Vector{Float64}, rows :: AbstractVector{<: Integer}, cols :: AbstractVector{<: Integer}, vals :: Vector{Cdouble})
   @check_ampl_model
   length(x) >= nlp.meta.nvar || error("x must have length at least $(nlp.meta.nvar)")
 
   _ = cons(nlp, x) ; nlp.counters.neval_cons -= 1
 
   err = Cint(0)
-  @asl_call(:asl_jac, Nothing,
-            (Ptr{Nothing}, Ptr{Float64}, Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble}, Ref{Cint}),
-             nlp.__asl,    x,            rows,      cols,      vals,         err)
+  @asl_call(:asl_jacval, Nothing,
+            (Ptr{Nothing}, Ptr{Float64}, Ptr{Cdouble}, Ref{Cint}),
+             nlp.__asl,    x,            vals,         err)
   nlp.counters.neval_jac += 1
   err == 0 || throw(AmplException("Error while evaluating constraints Jacobian"))
-  # Use 1-based indexing.
-  @. rows[1 : nlp.meta.nnzj] += 1
-  @. cols[1 : nlp.meta.nnzj] += 1
   return (rows, cols, vals)
 end
 
@@ -301,12 +330,8 @@ function NLPModels.jac_coord!(nlp :: AmplModel,
                               rows :: AbstractVector{<: Integer},
                               cols :: AbstractVector{<: Integer},
                               vals :: AbstractVector{<: AbstractFloat})
-  rows_ = Vector{Cint}(undef, nlp.meta.nnzj)
-  cols_ = Vector{Cint}(undef, nlp.meta.nnzj)
   vals_ = Vector{Cdouble}(undef, nlp.meta.nnzj)
-  jac_coord!(nlp, x, rows_, cols_, vals_)
-  rows[1 : nlp.meta.nnzj] .= rows_
-  cols[1 : nlp.meta.nnzj] .= cols_
+  jac_coord!(nlp, Vector{Float64}(x), rows, cols, vals_)
   vals[1 : nlp.meta.nnzj] .= vals_
   return (rows, cols, vals)
 end
@@ -317,7 +342,7 @@ function NLPModels.jprod!(nlp :: AmplModel,
                           Jv :: AbstractVector)
   nlp.counters.neval_jac -= 1
   nlp.counters.neval_jprod += 1
-  Jv[1:nlp.meta.ncon] = jac(nlp, x) * v
+  Jv[1:nlp.meta.ncon] = jac(nlp, Vector{Float64}(x)) * v
   return Jv
 end
 
@@ -327,15 +352,15 @@ function NLPModels.jtprod!(nlp :: AmplModel,
                            Jtv :: AbstractVector)
   nlp.counters.neval_jac -= 1
   nlp.counters.neval_jtprod += 1
-  Jtv[1:nlp.meta.nvar] = jac(nlp, x)' * v
+  Jtv[1:nlp.meta.nvar] = jac(nlp, Vector{Float64}(x))' * v
   return Jtv
 end
 
 function NLPModels.hprod!(nlp :: AmplModel,
                           x :: AbstractVector,
-                          v :: AbstractVector,
-                          hv :: AbstractVector;
-                          y :: AbstractVector = nlp.meta.y0,
+                          v :: Vector{Float64},
+                          hv :: Vector{Float64};
+                          y :: Vector{Float64} = nlp.meta.y0,
                           obj_weight :: Float64 = 1.0)
   # Note: x is in fact not used in hprod.
   @check_ampl_model
@@ -349,14 +374,28 @@ function NLPModels.hprod!(nlp :: AmplModel,
   end
   @asl_call(:asl_hprod, Ptr{Float64},
             (Ptr{Nothing}, Ptr{Float64}, Ptr{Float64}, Ptr{Float64}, Float64),
-             nlp.__asl, y,            v,            hv,           obj_weight);
+             nlp.__asl,    y,            v,            hv,           obj_weight);
   nlp.counters.neval_hprod += 1
   return hv
 end
 
+function NLPModels.hprod!(nlp :: AmplModel,
+                          x :: AbstractVector,
+                          v :: AbstractVector,
+                          hv :: AbstractVector;
+                          y :: AbstractVector = nlp.meta.y0,
+                          obj_weight :: Float64=1.0)
+  hv_ = Vector{Float64}(undef, nlp.meta.nvar)
+  hprod!(nlp, x, Vector{Float64}(v), hv_; y=Vector{Float64}(y), obj_weight=obj_weight)
+  hv[1 : nlp.meta.nvar] .= hv_
+  return hv
+end
+
 function NLPModels.jth_hprod!(nlp :: AmplModel,
-                              x :: AbstractVector, v :: AbstractVector,
-                              j :: Int, hv :: AbstractVector)
+                              x :: AbstractVector,
+                              v :: Vector{Float64},
+                              j :: Int,
+                              hv :: Vector{Float64})
   # Note: x is in fact not used in hprod.
   @check_ampl_model
   length(x) >= nlp.meta.nvar || error("x must have length at least $(nlp.meta.nvar)")
@@ -365,21 +404,34 @@ function NLPModels.jth_hprod!(nlp :: AmplModel,
 
   if nlp.safe
     if j == 0
-      _ = obj(nlp, x) ; nlp.counters.neval_obj -= 1
+      _ = obj(nlp, Vector{Float64}(x)) ; nlp.counters.neval_obj -= 1
     else
-      _ = cons(nlp, x) ; nlp.counters.neval_cons -= 1
+      _ = cons(nlp, Vector{Float64}(x)) ; nlp.counters.neval_cons -= 1
     end
   end
   @asl_call(:asl_hvcompd, Ptr{Float64},
             (Ptr{Nothing}, Ptr{Float64}, Ptr{Float64}, Int),
-             nlp.__asl, v,            hv,           j-1);
+             nlp.__asl,    v,            hv,           j-1);
   nlp.counters.neval_jhprod += 1
   return hv
 end
 
+function NLPModels.jth_hprod!(nlp :: AmplModel,
+                              x :: AbstractVector,
+                              v :: AbstractVector,
+                              j :: Int,
+                              hv :: AbstractVector)
+  hv_ = Vector{Float64}(undef, nlp.meta.nvar)
+  jth_hprod!(nlp, x, Vector{Float64}(v), j, hv_)
+  hv[1 : nlp.meta.nvar] .= hv_
+  return hv
+end
+
 function NLPModels.ghjvprod!(nlp :: AmplModel,
-                             x :: AbstractVector, g :: AbstractVector,
-                             v :: AbstractVector, gHv :: AbstractVector)
+                             x :: AbstractVector,
+                             g :: Vector{Float64},
+                             v :: Vector{Float64},
+                             gHv :: Vector{Float64})
   # Note: x is in fact not used.
   @check_ampl_model
   length(x) >= nlp.meta.nvar || error("x must have length at least $(nlp.meta.nvar)")
@@ -391,32 +443,47 @@ function NLPModels.ghjvprod!(nlp :: AmplModel,
   end
   @asl_call(:asl_ghjvprod, Ptr{Float64},
             (Ptr{Nothing}, Ptr{Float64}, Ptr{Float64}, Ptr{Float64}),
-             nlp.__asl, g,            v,            gHv);
+             nlp.__asl,    g,            v,            gHv);
   nlp.counters.neval_hprod += nlp.meta.ncon
 end
 
+function NLPModels.ghjvprod!(nlp :: AmplModel,
+                             x :: AbstractVector,
+                             g :: AbstractVector,
+                             v :: AbstractVector,
+                             gHv :: AbstractVector)
+  gHv_ = Vector{Float64}(undef, nlp.meta.nvar)
+  ghjvprod!(nlp, x, Vector{Float64}(x), Vector{Float64}(g), Vector{Float64}(v), gHv_)
+  gHv[1 : nlp.meta.var] .= gHv_
+  return gHv
+end
+
 function NLPModels.hess_structure!(nlp :: AmplModel, rows :: Vector{Cint}, cols :: Vector{Cint})
-  vals = Vector{Float64}(undef, nlp.meta.nnzh)
-  hess_coord!(nlp, nlp.meta.x0, rows, cols, vals)
-  nlp.counters.neval_hess -= 1
+  # Swap rows and cols to obtain the lower triangle.
+  @asl_call(:asl_hess_structure, Nothing,
+            (Ptr{Nothing}, Ptr{Int32}, Ptr{Int32}),
+             nlp.__asl,    cols,      rows)
+  # Use 1-based indexing.
+  @. cols += 1
+  @. rows += 1
   return (rows, cols)
 end
 
 function NLPModels.hess_structure!(nlp :: AmplModel, rows :: AbstractVector{<: Integer}, cols :: AbstractVector{<: Integer})
-  rows_ = Vector{Cint}(undef, length(rows))
-  cols_ = Vector{Cint}(undef, length(cols))
+  rows_ = Vector{Cint}(undef, nlp.meta.nnzh)
+  cols_ = Vector{Cint}(undef, nlp.meta.nnzh)
   hess_structure!(nlp, rows_, cols_)
-  rows .= rows_
-  cols .= cols_
+  rows[1 : nlp.meta.nnzh] .= rows_
+  cols[1 : nlp.meta.nnzh] .= cols_
   return (rows, cols)
 end
 
 function NLPModels.hess_coord!(nlp :: AmplModel,
                                x :: AbstractVector,
-                               rows :: Vector{Cint},
-                               cols :: Vector{Cint},
+                               rows :: AbstractVector{<: Integer},
+                               cols :: AbstractVector{<: Integer},
                                vals :: Vector{Cdouble};
-                               y :: AbstractVector = nlp.meta.y0,
+                               y :: Vector{Float64} = nlp.meta.y0,
                                obj_weight :: Float64 = 1.0)
   # Note: x is in fact not used.
   @check_ampl_model
@@ -428,14 +495,10 @@ function NLPModels.hess_coord!(nlp :: AmplModel,
     _ = cons(nlp, x) ; nlp.counters.neval_cons -= 1
   # end
 
-  @asl_call(:asl_hess, Nothing,
-            (Ptr{Nothing}, Ptr{Float64}, Float64,    Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble}),
-             nlp.__asl,    y,            obj_weight, cols,      rows,      vals)
+  @asl_call(:asl_hessval, Nothing,
+            (Ptr{Nothing}, Ptr{Float64}, Float64,    Ptr{Cdouble}),
+             nlp.__asl,    y,            obj_weight, vals)
   nlp.counters.neval_hess += 1
-  # Use 1-based indexing.
-  # Swap rows and cols to obtain the lower triangle.
-  @. cols += 1
-  @. rows += 1
   return (rows, cols, vals)
 end
 
@@ -444,12 +507,8 @@ function NLPModels.hess_coord!(nlp :: AmplModel,
                                rows :: AbstractVector{<: Integer},
                                cols :: AbstractVector{<: Integer},
                                vals :: AbstractVector{<: AbstractFloat}; kwargs...)
-  rows_ = Vector{Cint}(undef, length(rows))
-  cols_ = Vector{Cint}(undef, length(cols))
-  vals_ = Vector{Cdouble}(undef, length(vals))
-  hess_coord!(nlp, x, rows_, cols_, vals_; kwargs...)
-  rows .= rows_
-  cols .= cols_
-  vals .= vals_
+  vals_ = Vector{Cdouble}(undef, nlp.meta.nnzh)
+  hess_coord!(nlp, x, rows, cols, vals_; kwargs...)
+  vals[1 : nlp.meta.nnzh] .= vals_
   return (rows, cols, vals)
 end
